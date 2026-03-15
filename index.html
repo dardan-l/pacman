@@ -2,10 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Pac-Man</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --game-width: min(92vw, 420px);
+      --control-size: 72px;
+    }
     body {
       background: #000;
       display: flex;
@@ -13,17 +17,30 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      padding:
+        max(16px, env(safe-area-inset-top))
+        16px
+        max(24px, env(safe-area-inset-bottom))
+        16px;
       font-family: 'Courier New', monospace;
       color: #fff;
       user-select: none;
       -webkit-user-select: none;
+      overscroll-behavior: none;
+    }
+    .game-shell {
+      width: var(--game-width);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
     }
     .header {
       display: flex;
       justify-content: space-between;
-      width: 420px;
+      width: 100%;
       padding: 12px 0;
-      font-size: 16px;
+      font-size: clamp(13px, 3.2vw, 16px);
     }
     .score { color: #fff; }
     .high-score { color: #aaa; }
@@ -31,13 +48,25 @@
     .sub-header {
       display: flex;
       justify-content: space-between;
-      width: 420px;
+      width: 100%;
       padding: 0 0 8px 0;
-      font-size: 14px;
+      font-size: clamp(12px, 3vw, 14px);
     }
     .lives { color: #ffff00; letter-spacing: 4px; }
     .fruit-display { font-size: 14px; }
-    canvas { display: block; }
+    .game-frame {
+      position: relative;
+      display: inline-block;
+      width: 100%;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 2px solid #2121de;
+      image-rendering: pixelated;
+      touch-action: none;
+    }
     .overlay {
       position: absolute;
       inset: 0;
@@ -48,28 +77,89 @@
       gap: 16px;
       font-size: 28px;
       color: #ffff00;
+      text-align: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.55);
     }
     .overlay .sub { font-size: 14px; color: #aaa; }
     .overlay .hi { font-size: 16px; color: #fff; }
+    .controls {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      justify-items: center;
+      align-items: center;
+      margin-top: 6px;
+    }
+    .control-btn {
+      width: min(100%, var(--control-size));
+      aspect-ratio: 1;
+      border: 2px solid #2121de;
+      background: #111;
+      color: #ffff00;
+      font: inherit;
+      font-size: 30px;
+      line-height: 1;
+      border-radius: 14px;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .control-btn:active {
+      background: #2121de;
+      color: #fff;
+    }
+    .control-spacer {
+      width: min(100%, var(--control-size));
+      aspect-ratio: 1;
+    }
+    .mobile-hint {
+      color: #aaa;
+      font-size: 12px;
+      text-align: center;
+    }
+    @media (max-width: 480px) {
+      :root {
+        --game-width: min(94vw, 420px);
+        --control-size: 78px;
+      }
+      body {
+        justify-content: flex-start;
+      }
+    }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="score">SCORE: <span id="score">0</span></div>
-    <div class="high-score">HI: <span id="highscore">0</span></div>
-    <div class="level-display">LVL <span id="level">1</span></div>
-  </div>
-  <div class="sub-header">
-    <div class="lives" id="lives"></div>
-    <div class="fruit-display" id="fruits"></div>
-  </div>
-  <div style="position: relative; display: inline-block;">
-    <canvas id="game"></canvas>
-    <div class="overlay" id="overlay">
-      <div>PAC-MAN</div>
-      <div class="sub">Press any key or tap to start</div>
+  <main class="game-shell">
+    <div class="header">
+      <div class="score">SCORE: <span id="score">0</span></div>
+      <div class="high-score">HI: <span id="highscore">0</span></div>
+      <div class="level-display">LVL <span id="level">1</span></div>
     </div>
-  </div>
+    <div class="sub-header">
+      <div class="lives" id="lives"></div>
+      <div class="fruit-display" id="fruits"></div>
+    </div>
+    <div class="game-frame">
+      <canvas id="game"></canvas>
+      <div class="overlay" id="overlay">
+        <div>PAC-MAN</div>
+        <div class="sub">Tap, swipe, or use the controls to start</div>
+      </div>
+    </div>
+    <div class="controls" aria-label="Game controls">
+      <div class="control-spacer" aria-hidden="true"></div>
+      <button class="control-btn" data-dir="up" aria-label="Move up">&#9650;</button>
+      <div class="control-spacer" aria-hidden="true"></div>
+      <button class="control-btn" data-dir="left" aria-label="Move left">&#9664;</button>
+      <div class="control-spacer" aria-hidden="true"></div>
+      <button class="control-btn" data-dir="right" aria-label="Move right">&#9654;</button>
+      <div class="control-spacer" aria-hidden="true"></div>
+      <button class="control-btn" data-dir="down" aria-label="Move down">&#9660;</button>
+      <div class="control-spacer" aria-hidden="true"></div>
+    </div>
+    <div class="mobile-hint">Swipe on the board or use the D-pad</div>
+  </main>
 
 <script>
 const canvas = document.getElementById('game');
@@ -80,6 +170,7 @@ const livesEl = document.getElementById('lives');
 const levelEl = document.getElementById('level');
 const fruitsEl = document.getElementById('fruits');
 const overlay = document.getElementById('overlay');
+const controlButtons = document.querySelectorAll('.control-btn');
 
 const TILE = 20;
 
@@ -749,6 +840,13 @@ function startGame() {
   readyTimer = 120;
 }
 
+function setDirection(dir) {
+  if (gameState !== 'playing') {
+    startGame();
+  }
+  pac.nextDir = dir;
+}
+
 // Input
 document.addEventListener('keydown', (e) => {
   if (gameState !== 'playing') {
@@ -778,9 +876,15 @@ canvas.addEventListener('touchend', (e) => {
   const dx = e.changedTouches[0].clientX - touchX;
   const dy = e.changedTouches[0].clientY - touchY;
   if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-  if (Math.abs(dx) > Math.abs(dy)) pac.nextDir = dx > 0 ? 'right' : 'left';
-  else pac.nextDir = dy > 0 ? 'down' : 'up';
+  if (Math.abs(dx) > Math.abs(dy)) setDirection(dx > 0 ? 'right' : 'left');
+  else setDirection(dy > 0 ? 'down' : 'up');
 });
+
+for (const button of controlButtons) {
+  button.addEventListener('click', () => {
+    setDirection(button.dataset.dir);
+  });
+}
 
 buildGrid();
 updateLives();
