@@ -6,9 +6,13 @@
   <title>Pac-Man</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
     :root {
       --game-width: min(92vw, 420px);
-      --control-size: 72px;
+      --control-size: clamp(56px, 14vw, 72px);
     }
     body {
       background: #000;
@@ -16,31 +20,36 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
+      min-height: 100dvh;
+      height: 100dvh;
       padding:
-        max(16px, env(safe-area-inset-top))
-        16px
-        max(24px, env(safe-area-inset-bottom))
-        16px;
+        max(10px, env(safe-area-inset-top))
+        12px
+        max(12px, env(safe-area-inset-bottom))
+        12px;
       font-family: 'Courier New', monospace;
       color: #fff;
       user-select: none;
       -webkit-user-select: none;
       overscroll-behavior: none;
+      overflow: hidden;
     }
     .game-shell {
       width: var(--game-width);
+      max-width: 420px;
+      max-height: 100%;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
+      justify-content: center;
+      gap: 8px;
     }
     .header {
       display: flex;
       justify-content: space-between;
       width: 100%;
-      padding: 12px 0;
-      font-size: clamp(13px, 3.2vw, 16px);
+      padding: 4px 0 0;
+      font-size: clamp(12px, 3vw, 15px);
     }
     .score { color: #fff; }
     .high-score { color: #aaa; }
@@ -49,11 +58,11 @@
       display: flex;
       justify-content: space-between;
       width: 100%;
-      padding: 0 0 8px 0;
-      font-size: clamp(12px, 3vw, 14px);
+      padding: 0 0 2px 0;
+      font-size: clamp(11px, 2.8vw, 13px);
     }
-    .lives { color: #ffff00; letter-spacing: 4px; }
-    .fruit-display { font-size: 14px; }
+    .lives { color: #ffff00; letter-spacing: 3px; }
+    .fruit-display { font-size: clamp(12px, 3vw, 14px); }
     .game-frame {
       position: relative;
       display: inline-block;
@@ -87,10 +96,9 @@
       width: 100%;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
+      gap: 6px;
       justify-items: center;
       align-items: center;
-      margin-top: 6px;
     }
     .control-btn {
       width: min(100%, var(--control-size));
@@ -99,9 +107,9 @@
       background: #111;
       color: #ffff00;
       font: inherit;
-      font-size: 30px;
+      font-size: clamp(24px, 6vw, 30px);
       line-height: 1;
-      border-radius: 14px;
+      border-radius: 12px;
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
@@ -115,28 +123,33 @@
     }
     .mobile-hint {
       color: #aaa;
-      font-size: 12px;
+      font-size: 11px;
       text-align: center;
     }
     @media (max-width: 480px) {
       :root {
         --game-width: min(94vw, 420px);
-        --control-size: 78px;
+        --control-size: clamp(52px, 16vw, 68px);
       }
       body {
-        justify-content: flex-start;
+        justify-content: center;
+      }
+    }
+    @media (max-height: 760px) {
+      .mobile-hint {
+        display: none;
       }
     }
   </style>
 </head>
 <body>
-  <main class="game-shell">
-    <div class="header">
+  <main class="game-shell" id="game-shell">
+    <div class="header" id="header">
       <div class="score">SCORE: <span id="score">0</span></div>
       <div class="high-score">HI: <span id="highscore">0</span></div>
       <div class="level-display">LVL <span id="level">1</span></div>
     </div>
-    <div class="sub-header">
+    <div class="sub-header" id="sub-header">
       <div class="lives" id="lives"></div>
       <div class="fruit-display" id="fruits"></div>
     </div>
@@ -147,7 +160,7 @@
         <div class="sub">Tap, swipe, or use the controls to start</div>
       </div>
     </div>
-    <div class="controls" aria-label="Game controls">
+    <div class="controls" id="controls" aria-label="Game controls">
       <div class="control-spacer" aria-hidden="true"></div>
       <button class="control-btn" data-dir="up" aria-label="Move up">&#9650;</button>
       <div class="control-spacer" aria-hidden="true"></div>
@@ -158,7 +171,7 @@
       <button class="control-btn" data-dir="down" aria-label="Move down">&#9660;</button>
       <div class="control-spacer" aria-hidden="true"></div>
     </div>
-    <div class="mobile-hint">Swipe on the board or use the D-pad</div>
+    <div class="mobile-hint" id="mobile-hint">Swipe on the board or use the D-pad</div>
   </main>
 
 <script>
@@ -171,6 +184,11 @@ const levelEl = document.getElementById('level');
 const fruitsEl = document.getElementById('fruits');
 const overlay = document.getElementById('overlay');
 const controlButtons = document.querySelectorAll('.control-btn');
+const gameShell = document.getElementById('game-shell');
+const header = document.getElementById('header');
+const subHeader = document.getElementById('sub-header');
+const controls = document.getElementById('controls');
+const mobileHint = document.getElementById('mobile-hint');
 
 const TILE = 20;
 
@@ -209,6 +227,25 @@ const COLS = MAP_STR[0].length;
 
 canvas.width = COLS * TILE;
 canvas.height = ROWS * TILE;
+
+function updateLayout() {
+  const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const viewportWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+  const styles = getComputedStyle(document.body);
+  const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+  const shellGap = parseFloat(getComputedStyle(gameShell).gap) || 0;
+  const fixedHeight =
+    header.offsetHeight +
+    subHeader.offsetHeight +
+    controls.offsetHeight +
+    (mobileHint.offsetParent ? mobileHint.offsetHeight : 0) +
+    shellGap * 4;
+  const availableHeight = Math.max(220, viewportHeight - verticalPadding - fixedHeight);
+  const availableWidth = Math.max(220, viewportWidth - 24);
+  const boardWidthFromHeight = availableHeight * (canvas.width / canvas.height);
+  const nextWidth = Math.min(420, availableWidth, boardWidthFromHeight);
+  document.documentElement.style.setProperty('--game-width', `${nextWidth}px`);
+}
 
 // Cell types: 0=wall, 1=dot, 2=empty, 3=power pellet, 4=ghost wall, 5=ghost door
 function parseCell(ch) {
@@ -888,6 +925,11 @@ for (const button of controlButtons) {
 
 buildGrid();
 updateLives();
+updateLayout();
+window.addEventListener('resize', updateLayout);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', updateLayout);
+}
 gameLoop();
 </script>
 </body>
