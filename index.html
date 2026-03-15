@@ -23,10 +23,20 @@
       justify-content: space-between;
       width: 420px;
       padding: 12px 0;
-      font-size: 18px;
+      font-size: 16px;
     }
     .score { color: #fff; }
+    .high-score { color: #aaa; }
+    .level-display { color: #ffff00; }
+    .sub-header {
+      display: flex;
+      justify-content: space-between;
+      width: 420px;
+      padding: 0 0 8px 0;
+      font-size: 14px;
+    }
     .lives { color: #ffff00; letter-spacing: 4px; }
+    .fruit-display { font-size: 14px; }
     canvas { display: block; }
     .overlay {
       position: absolute;
@@ -40,12 +50,18 @@
       color: #ffff00;
     }
     .overlay .sub { font-size: 14px; color: #aaa; }
+    .overlay .hi { font-size: 16px; color: #fff; }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="score">SCORE: <span id="score">0</span></div>
+    <div class="high-score">HI: <span id="highscore">0</span></div>
+    <div class="level-display">LVL <span id="level">1</span></div>
+  </div>
+  <div class="sub-header">
     <div class="lives" id="lives"></div>
+    <div class="fruit-display" id="fruits"></div>
   </div>
   <div style="position: relative; display: inline-block;">
     <canvas id="game"></canvas>
@@ -59,7 +75,10 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
+const highScoreEl = document.getElementById('highscore');
 const livesEl = document.getElementById('lives');
+const levelEl = document.getElementById('level');
+const fruitsEl = document.getElementById('fruits');
 const overlay = document.getElementById('overlay');
 
 const TILE = 20;
@@ -77,9 +96,9 @@ const MAP_STR = [
   "W.....W...W...W.....W",
   "WWWWW.WWW-W-WWW.WWWWW",
   "----W.W-------W.W----",
-  "----W.W-GGDGGtW.W----",
+  "----W.W-GGDGG-W.W----",
   "WWWWW.W-G---G-W.WWWWW",
-  "-----..tG---G-..-----",
+  "------.-G---G-.------",
   "WWWWW.W-G---G-W.WWWWW",
   "----W.W-GGGGG-W.W----",
   "----W.W-------W.W----",
@@ -105,19 +124,77 @@ function parseCell(ch) {
   if (ch === 'W') return 0;
   if (ch === '.') return 1;
   if (ch === 'o') return 3;
-  if (ch === '-' || ch === 't') return 2; // t = tunnel marker, treated as empty
+  if (ch === '-') return 2;
   if (ch === 'G') return 4;
   if (ch === 'D') return 5;
   return 2;
 }
 
+// ---- Fruit config per level ----
+const FRUIT_TYPES = [
+  { name: 'Cherry',     emoji: '\u{1F352}', points: 100 },
+  { name: 'Strawberry', emoji: '\u{1F353}', points: 300 },
+  { name: 'Orange',     emoji: '\u{1F34A}', points: 500 },
+  { name: 'Apple',      emoji: '\u{1F34E}', points: 700 },
+  { name: 'Grape',      emoji: '\u{1F347}', points: 1000 },
+  { name: 'Peach',      emoji: '\u{1F351}', points: 2000 },
+  { name: 'Bell',       emoji: '\u{1F514}', points: 3000 },
+  { name: 'Key',        emoji: '\u{1F511}', points: 5000 },
+];
+
+// ---- Level speed scaling ----
+// Each level: pac speed (ticks per move), ghost speed, frightened ghost speed, fright duration
+function levelConfig(lvl) {
+  const l = Math.min(lvl, 21);
+  return {
+    pacSpeed:       Math.max(3, 5 - Math.floor(l / 4)),     // 5 -> 4 -> 3
+    ghostSpeed:     Math.max(4, 6 - Math.floor(l / 3)),     // 6 -> 5 -> 4
+    frightSpeed:    Math.max(6, 10 - Math.floor(l / 3)),    // 10 -> 8 -> 6
+    frightDuration: Math.max(60, 180 - (l - 1) * 15),      // 180 -> shorter
+  };
+}
+
+// ---- Scatter/chase mode timing (in ticks at 60fps) ----
+// Ghosts alternate: scatter for S ticks, chase for C ticks
+const MODE_SCHEDULE = [
+  { scatter: 420, chase: 1200 },  // 7s scatter, 20s chase
+  { scatter: 420, chase: 1200 },
+  { scatter: 300, chase: 1200 },
+  { scatter: 1, chase: Infinity }, // permanent chase after phase 4
+];
+
+// ---- Ghost scatter targets (corners) ----
+const SCATTER_TARGETS = [
+  { x: 19, y: 0 },   // Blinky: top-right
+  { x: 1, y: 0 },    // Pinky: top-left
+  { x: 19, y: 25 },  // Inky: bottom-right
+  { x: 1, y: 25 },   // Clyde: bottom-left
+];
+
 let grid = [];
 let score = 0;
 let lives = 3;
+let level = 1;
 let totalDots = 0;
 let dotsEaten = 0;
 let gameState = 'waiting';
 let ghostFrightened = 0;
+let highScore = parseInt(localStorage.getItem('pacman_highscore') || '0');
+let collectedFruits = [];
+
+// Fruit state
+let fruit = null; // { x, y, type, spawnTick, points }
+let fruitSpawned1 = false;
+let fruitSpawned2 = false;
+const FRUIT_POS = { x: 10, y: 13 };
+const FRUIT_DURATION = 600; // ticks visible
+
+// Scatter/chase mode tracking
+let modePhase = 0;
+let modeTick = 0;
+let currentMode = 'scatter'; // 'scatter' or 'chase'
+
+highScoreEl.textContent = highScore;
 
 function buildGrid() {
   grid = [];
@@ -132,37 +209,38 @@ function buildGrid() {
   }
 }
 
-// Pac-Man starts at row 20 (the Wo..W row), col 10 (center)
-// Actually let's find a good spot — row 24 center
 const PAC_START = { x: 10, y: 18 };
-
 let pac = { x: PAC_START.x, y: PAC_START.y, dir: 'left', nextDir: 'left', mouthAngle: 0, mouthDir: 1 };
 
 const GHOST_COLORS = ['#ff0000', '#ffb8ff', '#00ffff', '#ffb852'];
+const GHOST_NAMES = ['blinky', 'pinky', 'inky', 'clyde'];
 let ghosts = [];
+let ghostEatCombo = 0; // doubles each ghost eaten per power pellet
 
 function initGhosts() {
   ghosts = [
-    { x: 10, y: 11, dir: 'left', color: GHOST_COLORS[0], mode: 'chase', home: false, startTick: 0 },
-    { x: 9,  y: 13, dir: 'up',   color: GHOST_COLORS[1], mode: 'house', home: true, startTick: 120 },
-    { x: 10, y: 13, dir: 'up',   color: GHOST_COLORS[2], mode: 'house', home: true, startTick: 240 },
-    { x: 11, y: 13, dir: 'up',   color: GHOST_COLORS[3], mode: 'house', home: true, startTick: 360 },
+    { x: 10, y: 11, dir: 'left', color: GHOST_COLORS[0], name: 'blinky', mode: 'chase', home: false, startTick: 0, idx: 0 },
+    { x: 9,  y: 13, dir: 'up',   color: GHOST_COLORS[1], name: 'pinky',  mode: 'house', home: true, startTick: 120, idx: 1 },
+    { x: 10, y: 13, dir: 'up',   color: GHOST_COLORS[2], name: 'inky',   mode: 'house', home: true, startTick: 240, idx: 2 },
+    { x: 11, y: 13, dir: 'up',   color: GHOST_COLORS[3], name: 'clyde',  mode: 'house', home: true, startTick: 360, idx: 3 },
   ];
 }
 
 function resetPositions() {
   pac = { x: PAC_START.x, y: PAC_START.y, dir: 'left', nextDir: 'left', mouthAngle: 0, mouthDir: 1 };
   initGhosts();
+  modePhase = 0;
+  modeTick = 0;
+  currentMode = 'scatter';
 }
 
 function isWalkable(x, y, isGhost) {
   if (y < 0 || y >= ROWS) return false;
-  // Tunnel wrap: allow off-screen horizontally
   if (x < 0 || x >= COLS) return true;
   const cell = grid[y][x];
-  if (cell === 0) return false;   // wall
-  if (cell === 4) return false;   // ghost house wall
-  if (cell === 5) return !!isGhost; // ghost door — only ghosts pass
+  if (cell === 0) return false;
+  if (cell === 4) return false;
+  if (cell === 5) return !!isGhost;
   return true;
 }
 
@@ -180,7 +258,6 @@ function doMove(entity, dir) {
   if (dir === 'right') entity.x++;
   if (dir === 'up') entity.y--;
   if (dir === 'down') entity.y++;
-  // Tunnel wrap
   if (entity.x < 0) entity.x = COLS - 1;
   if (entity.x >= COLS) entity.x = 0;
 }
@@ -188,30 +265,72 @@ function doMove(entity, dir) {
 const DIRS = ['up', 'down', 'left', 'right'];
 const OPPOSITE = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
+// ---- Ghost personality targeting ----
+function getGhostTarget(ghost) {
+  // When frightened, random target
+  if (ghostFrightened > 0) {
+    return { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
+  }
+
+  // When in scatter mode, head to home corner
+  if (currentMode === 'scatter') {
+    return SCATTER_TARGETS[ghost.idx];
+  }
+
+  // Chase mode — each ghost has unique behavior
+  switch (ghost.name) {
+    case 'blinky':
+      // Blinky: directly targets Pac-Man
+      return { x: pac.x, y: pac.y };
+
+    case 'pinky': {
+      // Pinky: targets 4 tiles ahead of Pac-Man's direction
+      let tx = pac.x, ty = pac.y;
+      if (pac.dir === 'left') tx -= 4;
+      else if (pac.dir === 'right') tx += 4;
+      else if (pac.dir === 'up') { ty -= 4; tx -= 4; } // classic overflow bug reproduced
+      else ty += 4;
+      return { x: tx, y: ty };
+    }
+
+    case 'inky': {
+      // Inky: uses Blinky's position to calculate target
+      // Target = 2 tiles ahead of pac-man, then vector from Blinky doubled
+      let ax = pac.x, ay = pac.y;
+      if (pac.dir === 'left') ax -= 2;
+      else if (pac.dir === 'right') ax += 2;
+      else if (pac.dir === 'up') ay -= 2;
+      else ay += 2;
+      const blinky = ghosts[0];
+      return { x: ax + (ax - blinky.x), y: ay + (ay - blinky.y) };
+    }
+
+    case 'clyde': {
+      // Clyde: chases Pac-Man when far, scatters when within 8 tiles
+      const dist = Math.abs(ghost.x - pac.x) + Math.abs(ghost.y - pac.y);
+      if (dist > 8) return { x: pac.x, y: pac.y };
+      return SCATTER_TARGETS[3]; // retreat to corner
+    }
+
+    default:
+      return { x: pac.x, y: pac.y };
+  }
+}
+
 function ghostAI(ghost, tick) {
-  // Release from house
   if (ghost.mode === 'house') {
     if (tick >= ghost.startTick) {
       ghost.x = 10;
       ghost.y = 11;
-      ghost.mode = 'chase';
+      ghost.mode = currentMode;
       ghost.home = false;
       ghost.dir = 'left';
     }
     return;
   }
 
-  // Target
-  let tx, ty;
-  if (ghostFrightened > 0) {
-    tx = Math.floor(Math.random() * COLS);
-    ty = Math.floor(Math.random() * ROWS);
-  } else {
-    tx = pac.x;
-    ty = pac.y;
-  }
+  const target = getGhostTarget(ghost);
 
-  // Collect valid directions (not reverse, not wall)
   const options = [];
   for (const d of DIRS) {
     if (d === OPPOSITE[ghost.dir]) continue;
@@ -219,17 +338,13 @@ function ghostAI(ghost, tick) {
     options.push(d);
   }
 
-  // If stuck (dead end), allow reverse
   if (options.length === 0) {
     const rev = OPPOSITE[ghost.dir];
-    if (canMove(ghost.x, ghost.y, rev, true)) {
-      options.push(rev);
-    }
+    if (canMove(ghost.x, ghost.y, rev, true)) options.push(rev);
   }
 
   if (options.length === 0) return;
 
-  // Pick best
   let bestDir = options[0];
   let bestDist = Infinity;
   const flee = ghostFrightened > 0;
@@ -239,7 +354,7 @@ function ghostAI(ghost, tick) {
     let ny = ghost.y + (d === 'up' ? -1 : d === 'down' ? 1 : 0);
     if (nx < 0) nx = COLS - 1;
     if (nx >= COLS) nx = 0;
-    const dist = (nx - tx) ** 2 + (ny - ty) ** 2;
+    const dist = (nx - target.x) ** 2 + (ny - target.y) ** 2;
     if (flee ? dist > bestDist : dist < bestDist) {
       bestDist = dist;
       bestDir = d;
@@ -248,6 +363,13 @@ function ghostAI(ghost, tick) {
 
   ghost.dir = bestDir;
   doMove(ghost, ghost.dir);
+}
+
+// ---- Score popup system ----
+let popups = [];
+
+function addPopup(x, y, text, color) {
+  popups.push({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2, text, color, life: 60 });
 }
 
 // ---- Drawing ----
@@ -280,6 +402,15 @@ function drawPowerPellet(x, y, t) {
     ctx.arc(x * TILE + TILE / 2, y * TILE + TILE / 2, 6, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+function drawFruit() {
+  if (!fruit) return;
+  const ft = FRUIT_TYPES[fruit.typeIdx];
+  ctx.font = (TILE - 2) + 'px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(ft.emoji, fruit.x * TILE + TILE / 2, fruit.y * TILE + TILE / 2);
 }
 
 function drawPacMan() {
@@ -321,14 +452,12 @@ function drawGhost(ghost) {
   ctx.closePath();
   ctx.fill();
 
-  // Eyes
   if (!frightened) {
     ctx.fillStyle = '#fff';
     ctx.beginPath();
     ctx.arc(cx - 4, cy - 3, 4, 0, Math.PI * 2);
     ctx.arc(cx + 4, cy - 3, 4, 0, Math.PI * 2);
     ctx.fill();
-    // Pupils look toward pac-man
     const pdx = Math.sign(pac.x - ghost.x) * 1.5;
     const pdy = Math.sign(pac.y - ghost.y) * 1.5;
     ctx.fillStyle = '#2121de';
@@ -337,13 +466,11 @@ function drawGhost(ghost) {
     ctx.arc(cx + 4 + pdx, cy - 3 + pdy, 2, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // Frightened face
     ctx.fillStyle = frightened && !flashing ? '#ffb8ae' : '#f00';
     ctx.beginPath();
     ctx.arc(cx - 3, cy - 2, 1.5, 0, Math.PI * 2);
     ctx.arc(cx + 3, cy - 2, 1.5, 0, Math.PI * 2);
     ctx.fill();
-    // Wavy mouth
     ctx.strokeStyle = frightened && !flashing ? '#ffb8ae' : '#f00';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -355,25 +482,87 @@ function drawGhost(ghost) {
   }
 }
 
+function drawPopups() {
+  for (const p of popups) {
+    const alpha = p.life / 60;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.font = 'bold 12px Courier New';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.text, p.x, p.y - (60 - p.life) * 0.5);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawReadyText() {
+  ctx.fillStyle = '#ffff00';
+  ctx.font = 'bold 20px Courier New';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('READY!', canvas.width / 2, 13 * TILE + TILE / 2);
+}
+
 function updateLives() {
   let s = '';
   for (let i = 0; i < lives; i++) s += '\u25CF ';
   livesEl.textContent = s;
 }
 
+function updateFruitDisplay() {
+  fruitsEl.textContent = collectedFruits.slice(-7).map(i => FRUIT_TYPES[i].emoji).join('');
+}
+
+function updateHighScore() {
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('pacman_highscore', highScore.toString());
+    highScoreEl.textContent = highScore;
+  }
+}
+
 let tick = 0;
+let readyTimer = 0; // countdown before level starts
 
 function update() {
   if (gameState !== 'playing') return;
+
+  // Ready countdown at level start
+  if (readyTimer > 0) {
+    readyTimer--;
+    return;
+  }
+
   tick++;
+
+  // Scatter/chase mode cycling
+  if (ghostFrightened <= 0) {
+    modeTick++;
+    const phase = MODE_SCHEDULE[Math.min(modePhase, MODE_SCHEDULE.length - 1)];
+    const threshold = currentMode === 'scatter' ? phase.scatter : phase.chase;
+    if (modeTick >= threshold && threshold !== Infinity) {
+      currentMode = currentMode === 'scatter' ? 'chase' : 'scatter';
+      modeTick = 0;
+      if (currentMode === 'scatter') modePhase++;
+      // Reverse all active ghosts on mode switch
+      for (const g of ghosts) {
+        if (g.mode !== 'house') {
+          g.dir = OPPOSITE[g.dir];
+          g.mode = currentMode;
+        }
+      }
+    }
+  }
 
   // Mouth animation
   pac.mouthAngle += 0.15 * pac.mouthDir;
   if (pac.mouthAngle > 1) pac.mouthDir = -1;
   if (pac.mouthAngle < 0) pac.mouthDir = 1;
 
-  // Move pac-man every 5 ticks
-  if (tick % 5 === 0) {
+  const cfg = levelConfig(level);
+
+  // Move pac-man
+  if (tick % cfg.pacSpeed === 0) {
     if (canMove(pac.x, pac.y, pac.nextDir, false)) {
       pac.dir = pac.nextDir;
     }
@@ -381,36 +570,75 @@ function update() {
       doMove(pac, pac.dir);
     }
 
-    // Eat
+    // Eat dots
     const cell = grid[pac.y][pac.x];
     if (cell === 1) {
       grid[pac.y][pac.x] = 2;
       score += 10;
       dotsEaten++;
       scoreEl.textContent = score;
+      updateHighScore();
     } else if (cell === 3) {
       grid[pac.y][pac.x] = 2;
       score += 50;
       dotsEaten++;
       scoreEl.textContent = score;
-      ghostFrightened = 180;
-      // Reverse all active ghosts
+      updateHighScore();
+      ghostFrightened = cfg.frightDuration;
+      ghostEatCombo = 0;
       for (const g of ghosts) {
         if (g.mode !== 'house') g.dir = OPPOSITE[g.dir];
       }
     }
 
+    // Eat fruit
+    if (fruit && pac.x === fruit.x && pac.y === fruit.y) {
+      const pts = FRUIT_TYPES[fruit.typeIdx].points;
+      score += pts;
+      scoreEl.textContent = score;
+      updateHighScore();
+      addPopup(fruit.x, fruit.y, pts.toString(), '#fff');
+      collectedFruits.push(fruit.typeIdx);
+      updateFruitDisplay();
+      fruit = null;
+    }
+
+    // Spawn fruit at 70 and 170 dots eaten
+    if (dotsEaten >= 70 && !fruitSpawned1) {
+      fruitSpawned1 = true;
+      const typeIdx = Math.min(level - 1, FRUIT_TYPES.length - 1);
+      fruit = { x: FRUIT_POS.x, y: FRUIT_POS.y, typeIdx, spawnTick: tick };
+    }
+    if (dotsEaten >= 170 && !fruitSpawned2) {
+      fruitSpawned2 = true;
+      const typeIdx = Math.min(level - 1, FRUIT_TYPES.length - 1);
+      fruit = { x: FRUIT_POS.x, y: FRUIT_POS.y, typeIdx, spawnTick: tick };
+    }
+
+    // Win — advance level
     if (dotsEaten >= totalDots) {
-      gameState = 'won';
-      overlay.innerHTML = '<div>YOU WIN!</div><div class="sub">Score: ' + score + '</div><div class="sub">Press any key to play again</div>';
-      overlay.style.display = 'flex';
+      level++;
+      levelEl.textContent = level;
+      buildGrid();
+      resetPositions();
+      fruit = null;
+      fruitSpawned1 = false;
+      fruitSpawned2 = false;
+      ghostEatCombo = 0;
+      readyTimer = 120;
+      tick = 0;
       return;
     }
   }
 
-  // Move ghosts every 4 ticks (or 7 when frightened)
-  const ghostSpeed = ghostFrightened > 0 ? 10 : 6;
-  if (tick % ghostSpeed === 0) {
+  // Fruit timeout
+  if (fruit && tick - fruit.spawnTick > FRUIT_DURATION) {
+    fruit = null;
+  }
+
+  // Move ghosts
+  const ghostSpd = ghostFrightened > 0 ? cfg.frightSpeed : cfg.ghostSpeed;
+  if (tick % ghostSpd === 0) {
     for (const ghost of ghosts) {
       ghostAI(ghost, tick);
     }
@@ -418,13 +646,20 @@ function update() {
 
   if (ghostFrightened > 0) ghostFrightened--;
 
+  // Update popups
+  popups = popups.filter(p => { p.life--; return p.life > 0; });
+
   // Collision
   for (const g of ghosts) {
     if (g.mode === 'house') continue;
     if (g.x === pac.x && g.y === pac.y) {
       if (ghostFrightened > 0) {
-        score += 200;
+        ghostEatCombo++;
+        const pts = 200 * Math.pow(2, ghostEatCombo - 1);
+        score += pts;
         scoreEl.textContent = score;
+        updateHighScore();
+        addPopup(g.x, g.y, pts.toString(), '#00ffff');
         g.x = 10; g.y = 13; g.mode = 'house'; g.home = true;
         g.startTick = tick + 120;
       } else {
@@ -432,11 +667,17 @@ function update() {
         updateLives();
         if (lives <= 0) {
           gameState = 'lost';
-          overlay.innerHTML = '<div>GAME OVER</div><div class="sub">Score: ' + score + '</div><div class="sub">Press any key to play again</div>';
+          updateHighScore();
+          let msg = '<div>GAME OVER</div>';
+          msg += '<div class="hi">Score: ' + score + '</div>';
+          if (score >= highScore) msg += '<div class="hi" style="color:#ffff00">NEW HIGH SCORE!</div>';
+          msg += '<div class="sub">Press any key to play again</div>';
+          overlay.innerHTML = msg;
           overlay.style.display = 'flex';
           return;
         }
         resetPositions();
+        readyTimer = 90;
         return;
       }
     }
@@ -458,12 +699,24 @@ function draw() {
     }
   }
 
+  drawFruit();
+
   if (gameState === 'playing') {
-    drawPacMan();
-    for (const ghost of ghosts) {
-      if (ghost.mode !== 'house') drawGhost(ghost);
-      else if (tick >= ghost.startTick - 60) drawGhost(ghost); // fade in before release
+    if (readyTimer > 0) {
+      drawReadyText();
+      // Still draw pac and ghosts in position
+      drawPacMan();
+      for (const ghost of ghosts) {
+        if (ghost.mode !== 'house') drawGhost(ghost);
+      }
+    } else {
+      drawPacMan();
+      for (const ghost of ghosts) {
+        if (ghost.mode !== 'house') drawGhost(ghost);
+        else if (tick >= ghost.startTick - 60) drawGhost(ghost);
+      }
     }
+    drawPopups();
   }
 }
 
@@ -476,14 +729,24 @@ function gameLoop() {
 function startGame() {
   score = 0;
   lives = 3;
+  level = 1;
   ghostFrightened = 0;
+  ghostEatCombo = 0;
+  collectedFruits = [];
+  fruit = null;
+  fruitSpawned1 = false;
+  fruitSpawned2 = false;
   scoreEl.textContent = '0';
+  levelEl.textContent = '1';
+  highScoreEl.textContent = highScore;
   updateLives();
+  updateFruitDisplay();
   buildGrid();
   resetPositions();
   gameState = 'playing';
   overlay.style.display = 'none';
   tick = 0;
+  readyTimer = 120;
 }
 
 // Input
