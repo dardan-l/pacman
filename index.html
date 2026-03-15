@@ -372,8 +372,8 @@ function update() {
   if (pac.mouthAngle > 1) pac.mouthDir = -1;
   if (pac.mouthAngle < 0) pac.mouthDir = 1;
 
-  // Move pac-man every 3 ticks
-  if (tick % 3 === 0) {
+  // Move pac-man every 5 ticks
+  if (tick % 5 === 0) {
     if (canMove(pac.x, pac.y, pac.nextDir, false)) {
       pac.dir = pac.nextDir;
     }
@@ -409,7 +409,7 @@ function update() {
   }
 
   // Move ghosts every 4 ticks (or 7 when frightened)
-  const ghostSpeed = ghostFrightened > 0 ? 7 : 4;
+  const ghostSpeed = ghostFrightened > 0 ? 10 : 6;
   if (tick % ghostSpeed === 0) {
     for (const ghost of ghosts) {
       ghostAI(ghost, tick);
