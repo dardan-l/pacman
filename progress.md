@@ -1,0 +1,41 @@
+Original prompt: check my pac man game using skills. see what else needs improving
+
+- 2026-03-15: Initial audit started.
+- Using skills: `develop-web-game` for runtime validation and `ship-check` for definition-of-done audit.
+- Early finding: `index.html` does not expose `window.render_game_to_text` or `window.advanceTime`, which weakens automated gameplay verification and regression testing.
+- Local HTTP server started successfully on port `8123` for audit.
+- Playwright CLI dependency was reachable via `npx`, but actual browser launch against localhost was blocked by tool-policy in this environment, so runtime screenshot validation could not be completed end-to-end here.
+- Static/runtime-code findings to report:
+  - `GAME OVER` shows `NEW HIGH SCORE!` on ties because the check uses `score >= highScore` after `updateHighScore()` already synchronized `highScore`.
+  - No defensive guard around `localStorage` access; this can hard-fail in restricted browser contexts.
+  - No guard on `touchend` for empty `changedTouches`, which is a brittle mobile input boundary.
+  - No `pause`, `fullscreen`, `render_game_to_text`, or `advanceTime` hooks, so the game is harder to test, debug, and validate automatically.
+  - README is adequate for local use, but there is no live URL documented and no explicit deployment artifact beyond local `.vercel` metadata.
+- Patched in `index.html`:
+  - Added guarded `loadHighScore()` / `saveHighScore()` helpers so storage failures no longer crash the game.
+  - Fixed game-over high-score messaging so only a true new record shows the banner.
+  - Added touch guards for empty `touches` / `changedTouches`.
+  - Added `window.render_game_to_text` and `window.advanceTime(ms)` plus a shared `stepFrame()` helper for deterministic test stepping.
+- Verification:
+  - JavaScript syntax check passed by extracting the inline `<script>` block and compiling it with `new Function(...)`.
+- Remaining improvements not handled in this pass:
+  - Live URL documented in README.
+  - Full browser-play validation once Playwright/browser launch is allowed in the environment.
+- Additional pass completed:
+  - Added pause/resume support on `P` using the existing overlay system.
+  - Added fullscreen toggle on `F`, `Esc` exit handling, and layout refresh on `fullscreenchange`.
+  - Updated README with new controls, debug hooks, and an explicit reminder to record the production URL after deployment.
+- Verification:
+  - JavaScript syntax check still passes after the pause/fullscreen changes.
+- Balance tuning pass:
+  - Slowed the game slightly by increasing Pac-Man, ghost, and frightened ghost move intervals by 1 tick across the level curve.
+  - Added 120 ticks (2 seconds at 60 FPS) to frightened duration at level 1 while preserving the existing shortening curve across later levels.
+- Shared leaderboard pass:
+  - Added `api/leaderboard.js` to read/write top scores through Supabase from a server-side Vercel function.
+  - Added in-game global leaderboard UI and game-over name submission flow.
+  - Added `supabase/schema.sql`, `.env.example`, and README setup instructions for Supabase + Vercel env vars.
+- Verification:
+  - Inline game script syntax passes.
+  - `api/leaderboard.js` ESM syntax passes.
+- Remaining gap:
+  - End-to-end leaderboard behavior still needs live verification against a real Supabase project and deployed/local Vercel function.

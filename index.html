@@ -126,6 +126,86 @@
       font-size: 11px;
       text-align: center;
     }
+    .leaderboard-panel {
+      width: 100%;
+      border: 2px solid #2121de;
+      background: #080808;
+      padding: 10px 12px;
+      color: #fff;
+    }
+    .leaderboard-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+      color: #ffff00;
+      font-size: 13px;
+    }
+    .leaderboard-status {
+      color: #aaa;
+      font-size: 11px;
+    }
+    .leaderboard-list {
+      list-style: none;
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .leaderboard-item {
+      display: grid;
+      grid-template-columns: 28px 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .leaderboard-rank {
+      color: #aaa;
+    }
+    .leaderboard-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .leaderboard-score {
+      color: #ffff00;
+    }
+    .leaderboard-level {
+      color: #aaa;
+    }
+    .leaderboard-empty {
+      color: #aaa;
+      font-size: 12px;
+    }
+    .overlay-form {
+      display: grid;
+      gap: 10px;
+      width: min(100%, 240px);
+    }
+    .overlay-input {
+      width: 100%;
+      border: 2px solid #2121de;
+      background: #111;
+      color: #fff;
+      font: inherit;
+      padding: 10px 12px;
+      text-transform: uppercase;
+    }
+    .overlay-button {
+      border: 2px solid #2121de;
+      background: #111;
+      color: #ffff00;
+      font: inherit;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .overlay-button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .overlay-status {
+      min-height: 16px;
+      font-size: 12px;
+      color: #aaa;
+    }
     @media (max-width: 480px) {
       :root {
         --game-width: min(94vw, 420px);
@@ -172,6 +252,13 @@
       <div class="control-spacer" aria-hidden="true"></div>
     </div>
     <div class="mobile-hint" id="mobile-hint">Swipe on the board or use the D-pad</div>
+    <section class="leaderboard-panel" aria-labelledby="leaderboard-title">
+      <div class="leaderboard-title">
+        <span id="leaderboard-title">GLOBAL TOP 10</span>
+        <span class="leaderboard-status" id="leaderboard-status">Loading...</span>
+      </div>
+      <ol class="leaderboard-list" id="leaderboard-list"></ol>
+    </section>
   </main>
 
 <script>
@@ -189,8 +276,11 @@ const header = document.getElementById('header');
 const subHeader = document.getElementById('sub-header');
 const controls = document.getElementById('controls');
 const mobileHint = document.getElementById('mobile-hint');
+const leaderboardList = document.getElementById('leaderboard-list');
+const leaderboardStatusEl = document.getElementById('leaderboard-status');
 
 const TILE = 20;
+const LEADERBOARD_LIMIT = 10;
 
 // W=wall, .=dot, o=power pellet, -=empty, G=ghost house wall, D=ghost door
 const MAP_STR = [
@@ -275,10 +365,10 @@ const FRUIT_TYPES = [
 function levelConfig(lvl) {
   const l = Math.min(lvl, 21);
   return {
-    pacSpeed:       Math.max(3, 5 - Math.floor(l / 4)),     // 5 -> 4 -> 3
-    ghostSpeed:     Math.max(4, 6 - Math.floor(l / 3)),     // 6 -> 5 -> 4
-    frightSpeed:    Math.max(6, 10 - Math.floor(l / 3)),    // 10 -> 8 -> 6
-    frightDuration: Math.max(60, 180 - (l - 1) * 15),      // 180 -> shorter
+    pacSpeed:       Math.max(4, 6 - Math.floor(l / 4)),     // 6 -> 5 -> 4
+    ghostSpeed:     Math.max(5, 7 - Math.floor(l / 3)),     // 7 -> 6 -> 5
+    frightSpeed:    Math.max(7, 11 - Math.floor(l / 3)),    // 11 -> 9 -> 7
+    frightDuration: Math.max(180, 300 - (l - 1) * 15),      // +2s at level 1, still shortens later
   };
 }
 
@@ -307,8 +397,12 @@ let totalDots = 0;
 let dotsEaten = 0;
 let gameState = 'waiting';
 let ghostFrightened = 0;
-let highScore = parseInt(localStorage.getItem('pacman_highscore') || '0');
 let collectedFruits = [];
+let highScore = 0;
+let leaderboardScores = [];
+let leaderboardStatus = 'Loading...';
+let pendingLeaderboardEntry = null;
+let leaderboardSubmitting = false;
 
 // Fruit state
 let fruit = null; // { x, y, type, spawnTick, points }
@@ -322,7 +416,164 @@ let modePhase = 0;
 let modeTick = 0;
 let currentMode = 'scatter'; // 'scatter' or 'chase'
 
+function loadHighScore() {
+  try {
+    const storedValue = window.localStorage.getItem('pacman_highscore');
+    const parsed = Number.parseInt(storedValue || '0', 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveHighScore(value) {
+  try {
+    window.localStorage.setItem('pacman_highscore', value.toString());
+  } catch {
+    // Ignore storage failures so the game still runs in restricted contexts.
+  }
+}
+
+highScore = loadHighScore();
 highScoreEl.textContent = highScore;
+
+function showOverlay(title, subtitle, detail) {
+  let html = `<div>${title}</div>`;
+  if (detail) html += `<div class="hi">${detail}</div>`;
+  if (subtitle) html += `<div class="sub">${subtitle}</div>`;
+  overlay.innerHTML = html;
+  overlay.style.display = 'flex';
+}
+
+function hideOverlay() {
+  overlay.style.display = 'none';
+}
+
+async function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+    return false;
+  }
+  await gameShell.requestFullscreen();
+  return true;
+}
+
+function pauseGame() {
+  if (gameState !== 'playing') return;
+  gameState = 'paused';
+  showOverlay('PAUSED', 'Press P to resume', 'F toggles fullscreen');
+}
+
+function resumeGame() {
+  if (gameState !== 'paused') return;
+  gameState = 'playing';
+  hideOverlay();
+}
+
+function togglePause() {
+  if (gameState === 'playing') pauseGame();
+  else if (gameState === 'paused') resumeGame();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function isTypingTarget(target) {
+  return Boolean(target && target.closest && target.closest('input, textarea, button'));
+}
+
+function renderLeaderboard() {
+  leaderboardStatusEl.textContent = leaderboardStatus;
+  if (!leaderboardScores.length) {
+    leaderboardList.innerHTML = '<li class="leaderboard-empty">No scores yet. Be the first to post one.</li>';
+    return;
+  }
+
+  leaderboardList.innerHTML = leaderboardScores.map((entry, index) => (
+    `<li class="leaderboard-item">` +
+      `<span class="leaderboard-rank">#${index + 1}</span>` +
+      `<span class="leaderboard-name">${escapeHtml(entry.name)}</span>` +
+      `<span class="leaderboard-score">${entry.score}</span>` +
+      `<span class="leaderboard-level">L${entry.level}</span>` +
+    `</li>`
+  )).join('');
+}
+
+async function loadLeaderboard() {
+  leaderboardStatus = 'Loading...';
+  renderLeaderboard();
+  try {
+    const response = await fetch(`/api/leaderboard?limit=${LEADERBOARD_LIMIT}`, { cache: 'no-store' });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Failed to load leaderboard');
+    leaderboardScores = payload.scores || [];
+    leaderboardStatus = 'Updated live';
+  } catch {
+    leaderboardStatus = 'Unavailable';
+  }
+  renderLeaderboard();
+}
+
+function renderGameOverOverlay(hasNewHighScore, submitStatus = '') {
+  const scoreLabel = `Score: ${score}`;
+  const highScoreLine = hasNewHighScore ? '<div class="hi" style="color:#ffff00">NEW HIGH SCORE!</div>' : '';
+  const disabledAttr = leaderboardSubmitting ? 'disabled' : '';
+  const buttonLabel = leaderboardSubmitting ? 'Submitting...' : 'Submit Score';
+
+  overlay.innerHTML =
+    '<div>GAME OVER</div>' +
+    `<div class="hi">${scoreLabel}</div>` +
+    highScoreLine +
+    '<form class="overlay-form" id="leaderboard-form">' +
+      '<input class="overlay-input" id="leaderboard-name-input" name="name" type="text" maxlength="16" autocomplete="nickname" placeholder="Your name" required />' +
+      `<button class="overlay-button" type="submit" ${disabledAttr}>${buttonLabel}</button>` +
+      `<div class="overlay-status" id="overlay-status">${escapeHtml(submitStatus || 'Enter your name to post to the global leaderboard.')}</div>` +
+    '</form>' +
+    '<div class="sub">Press any non-typing key to play again</div>';
+  overlay.style.display = 'flex';
+
+  const input = document.getElementById('leaderboard-name-input');
+  if (input) input.focus();
+}
+
+async function submitLeaderboardScore(name) {
+  if (!pendingLeaderboardEntry || leaderboardSubmitting) return;
+
+  leaderboardSubmitting = true;
+  renderGameOverOverlay(pendingLeaderboardEntry.isNewHighScore, 'Submitting score...');
+
+  try {
+    const response = await fetch('/api/leaderboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        score: pendingLeaderboardEntry.score,
+        level: pendingLeaderboardEntry.level,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Failed to submit score');
+
+    leaderboardScores = payload.scores || [];
+    leaderboardStatus = 'Updated live';
+    pendingLeaderboardEntry = null;
+    renderLeaderboard();
+    showOverlay('GAME OVER', 'Press any non-typing key to play again', `Score submitted for ${name.toUpperCase()}`);
+  } catch (error) {
+    leaderboardSubmitting = false;
+    renderGameOverOverlay(
+      pendingLeaderboardEntry.isNewHighScore,
+      error.message || 'Failed to submit score.'
+    );
+  }
+}
 
 function buildGrid() {
   grid = [];
@@ -644,9 +895,11 @@ function updateFruitDisplay() {
 function updateHighScore() {
   if (score > highScore) {
     highScore = score;
-    localStorage.setItem('pacman_highscore', highScore.toString());
+    saveHighScore(highScore);
     highScoreEl.textContent = highScore;
+    return true;
   }
+  return false;
 }
 
 let tick = 0;
@@ -794,14 +1047,16 @@ function update() {
         lives--;
         updateLives();
         if (lives <= 0) {
+          const hasNewHighScore = score > highScore;
           gameState = 'lost';
           updateHighScore();
-          let msg = '<div>GAME OVER</div>';
-          msg += '<div class="hi">Score: ' + score + '</div>';
-          if (score >= highScore) msg += '<div class="hi" style="color:#ffff00">NEW HIGH SCORE!</div>';
-          msg += '<div class="sub">Press any key to play again</div>';
-          overlay.innerHTML = msg;
-          overlay.style.display = 'flex';
+          pendingLeaderboardEntry = {
+            score,
+            level,
+            isNewHighScore: hasNewHighScore,
+          };
+          leaderboardSubmitting = false;
+          renderGameOverOverlay(hasNewHighScore);
           return;
         }
         resetPositions();
@@ -848,13 +1103,21 @@ function draw() {
   }
 }
 
-function gameLoop() {
+function stepFrame() {
   update();
   draw();
+}
+
+function gameLoop() {
+  if (!window.__codexManualStep) {
+    stepFrame();
+  }
   requestAnimationFrame(gameLoop);
 }
 
 function startGame() {
+  pendingLeaderboardEntry = null;
+  leaderboardSubmitting = false;
   score = 0;
   lives = 3;
   level = 1;
@@ -872,12 +1135,13 @@ function startGame() {
   buildGrid();
   resetPositions();
   gameState = 'playing';
-  overlay.style.display = 'none';
+  hideOverlay();
   tick = 0;
   readyTimer = 120;
 }
 
 function setDirection(dir) {
+  if (gameState === 'paused') return;
   if (gameState !== 'playing') {
     startGame();
   }
@@ -885,19 +1149,71 @@ function setDirection(dir) {
 }
 
 // Input
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', async (e) => {
+  const key = e.key.toLowerCase();
+  const typing = isTypingTarget(e.target);
+
+  if (key === 'f') {
+    if (typing) return;
+    e.preventDefault();
+    try {
+      await toggleFullscreen();
+      updateLayout();
+    } catch {
+      // Ignore fullscreen failures so keyboard input still works normally.
+    }
+    return;
+  }
+
+  if (key === 'p') {
+    if (typing) return;
+    e.preventDefault();
+    togglePause();
+    return;
+  }
+
+  if (e.key === 'Escape' && document.fullscreenElement) {
+    if (typing) return;
+    e.preventDefault();
+    try {
+      await document.exitFullscreen();
+      updateLayout();
+    } catch {
+      // Ignore fullscreen exit failures.
+    }
+    return;
+  }
+
+  if (typing) return;
+
+  if (gameState === 'paused') {
+    e.preventDefault();
+    return;
+  }
+
   if (gameState !== 'playing') {
     startGame();
     return;
   }
-  switch (e.key) {
-    case 'ArrowLeft': case 'a': pac.nextDir = 'left'; break;
-    case 'ArrowRight': case 'd': pac.nextDir = 'right'; break;
-    case 'ArrowUp': case 'w': pac.nextDir = 'up'; break;
-    case 'ArrowDown': case 's': pac.nextDir = 'down'; break;
+
+  switch (key) {
+    case 'arrowleft': case 'a': pac.nextDir = 'left'; break;
+    case 'arrowright': case 'd': pac.nextDir = 'right'; break;
+    case 'arrowup': case 'w': pac.nextDir = 'up'; break;
+    case 'arrowdown': case 's': pac.nextDir = 'down'; break;
     default: return;
   }
   e.preventDefault();
+});
+
+overlay.addEventListener('submit', async (e) => {
+  const form = e.target;
+  if (!(form instanceof HTMLFormElement) || form.id !== 'leaderboard-form') return;
+
+  e.preventDefault();
+  const formData = new FormData(form);
+  const name = String(formData.get('name') || '').trim();
+  await submitLeaderboardScore(name);
 });
 
 // Touch
@@ -905,17 +1221,76 @@ let touchX = 0, touchY = 0;
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   if (gameState !== 'playing') { startGame(); return; }
+  if (!e.touches.length) return;
   touchX = e.touches[0].clientX;
   touchY = e.touches[0].clientY;
 }, { passive: false });
 canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 canvas.addEventListener('touchend', (e) => {
+  if (!e.changedTouches.length) return;
   const dx = e.changedTouches[0].clientX - touchX;
   const dy = e.changedTouches[0].clientY - touchY;
   if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
   if (Math.abs(dx) > Math.abs(dy)) setDirection(dx > 0 ? 'right' : 'left');
   else setDirection(dy > 0 ? 'down' : 'up');
 });
+
+window.render_game_to_text = function renderGameToText() {
+  const payload = {
+    coordinateSystem: {
+      origin: 'top-left',
+      xDirection: 'right',
+      yDirection: 'down',
+      tileSize: TILE,
+      grid: { cols: COLS, rows: ROWS },
+    },
+    mode: gameState,
+    score,
+    highScore,
+    lives,
+    level,
+    tick,
+    readyTimer,
+    ghostFrightened,
+    currentMode,
+    fullscreen: Boolean(document.fullscreenElement),
+    dotsRemaining: totalDots - dotsEaten,
+    leaderboard: leaderboardScores.slice(0, 5).map((entry, index) => ({
+      rank: index + 1,
+      name: entry.name,
+      score: entry.score,
+      level: entry.level,
+    })),
+    fruit: fruit ? { x: fruit.x, y: fruit.y, type: FRUIT_TYPES[fruit.typeIdx].name } : null,
+    player: {
+      x: pac.x,
+      y: pac.y,
+      dir: pac.dir,
+      nextDir: pac.nextDir,
+    },
+    ghosts: ghosts.map((ghost) => ({
+      name: ghost.name,
+      x: ghost.x,
+      y: ghost.y,
+      dir: ghost.dir,
+      mode: ghost.mode,
+      home: ghost.home,
+    })),
+  };
+  return JSON.stringify(payload);
+};
+
+window.advanceTime = function advanceTime(ms) {
+  const frameDuration = 1000 / 60;
+  const steps = Math.max(1, Math.round((Number(ms) || frameDuration) / frameDuration));
+  const previousManualStep = window.__codexManualStep;
+  window.__codexManualStep = true;
+  for (let i = 0; i < steps; i++) {
+    stepFrame();
+  }
+  window.__codexManualStep = previousManualStep;
+  return window.render_game_to_text();
+};
 
 for (const button of controlButtons) {
   button.addEventListener('click', () => {
@@ -926,7 +1301,10 @@ for (const button of controlButtons) {
 buildGrid();
 updateLives();
 updateLayout();
+renderLeaderboard();
+loadLeaderboard();
 window.addEventListener('resize', updateLayout);
+document.addEventListener('fullscreenchange', updateLayout);
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', updateLayout);
 }
