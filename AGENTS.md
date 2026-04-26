@@ -1,6 +1,6 @@
 # Pac-Man
 
-This project is the single-file browser game in `/Users/dardan/Documents/dev/pacman`.
+Single-file browser Pac-Man game with a Supabase-backed leaderboard.
 
 ## Goal
 

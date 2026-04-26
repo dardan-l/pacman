@@ -1,6 +1,8 @@
 # Pac-Man
 
-Single-file browser Pac-Man built in plain HTML, CSS, and JavaScript.
+Single-file browser Pac-Man built in plain HTML, CSS, and JavaScript, with a Supabase-backed global leaderboard.
+
+**Live demo:** https://pacman-pearl.vercel.app
 
 ## Features
 
@@ -52,21 +54,19 @@ Use `vercel dev` when you want the leaderboard API available locally.
 The game exposes two browser-console hooks to make automated validation and debugging easier:
 
 ```js
-window.render_game_to_text()
-window.advanceTime(1000)
+window.render_game_to_text();
+window.advanceTime(1000);
 ```
 
 `render_game_to_text()` returns the current game state as JSON. `advanceTime(ms)` steps the game deterministically at a 60 FPS equivalent and returns the updated JSON state.
 
 ## Deploy
 
-This project is linked to Vercel and can be deployed directly from the repo root:
+Linked to Vercel; deploy from the repo root:
 
 ```bash
 vercel --prod
 ```
-
-After deployment, add the production URL here so the README meets the "real user can access it" bar.
 
 ## Supabase Setup
 
@@ -81,5 +81,10 @@ This project writes to Supabase only through the server-side Vercel function in 
 
 ## Files
 
-- `index.html`: entire game
-- `.gitignore`: ignores local Vercel project metadata
+- `index.html` — full game (HTML, CSS, JS in one file)
+- `api/leaderboard.js` — server-side Vercel function that proxies leaderboard reads/writes to Supabase
+- `supabase/schema.sql` — leaderboard table schema
+
+## License
+
+MIT — see [LICENSE](LICENSE).
